@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "apex-trader"
+version = "0.1.0"
+description = "Autonomous Multi-Agent Quant Trading System"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.2.0",
+    "pyyaml>=6.0.1",
+    "python-dotenv>=1.0.1",
+    "rich>=13.7.1",
+    "typer>=0.12.3",
+    "numpy>=1.26.4",
+    "pandas>=2.2.2",
+    "scipy>=1.13.0",
+    "yfinance>=0.2.40",
+    "ccxt>=4.3.0",
+    "feedparser>=6.0.11",
+    "requests>=2.31.0",
+    "aiohttp>=3.9.5",
+    "litellm>=1.40.0",
+    "fastapi>=0.111.0",
+    "uvicorn>=0.30.1",
+    "duckdb>=1.0.0",
+    "sqlalchemy>=2.0.30",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
