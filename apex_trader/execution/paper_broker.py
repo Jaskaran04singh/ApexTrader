@@ -39,9 +39,10 @@ class PaperBroker(BaseBroker):
         quantity: float,
         price: float,
         stop_loss: float,
-        take_profit: float
+        take_profit: float,
+        atr: float = 0.0
     ) -> OrderResult:
-        """Executes a simulated market order with slippage and transaction fee."""
+        """Executes a simulated market order with slippage, transaction fee, and trailing stop tracking."""
         if quantity <= 0 or price <= 0:
             return OrderResult(
                 order_id="",
@@ -91,7 +92,11 @@ class PaperBroker(BaseBroker):
             take_profit=take_profit,
             unrealized_pnl=0.0,
             unrealized_pnl_pct=0.0,
-            opened_at=datetime.utcnow()
+            opened_at=datetime.utcnow(),
+            highest_price=exec_price,
+            lowest_price=exec_price,
+            atr=atr if atr > 0 else (exec_price * 0.015),
+            trailing_stop_active=False
         )
         self.positions[pos_id] = pos
 
@@ -137,7 +142,7 @@ class PaperBroker(BaseBroker):
 
         realized_pnl_pct = (realized_pnl / (pos.quantity * pos.entry_price)) * 100.0
 
-        self.cash += realized_pnl
+        self.cash += (pos.quantity * exec_price) + realized_pnl if pos.side == "SHORT" else realized_pnl
         del self.positions[position_id]
 
         closed_record = {
@@ -167,8 +172,14 @@ class PaperBroker(BaseBroker):
             message=f"Position closed ({reason}): Realized PnL ${round(realized_pnl, 2)} ({round(realized_pnl_pct, 2)}%)"
         )
 
-    def update_positions_mark_price(self, symbol: str, current_price: float) -> List[Dict[str, Any]]:
-        """Updates live mark prices and automatically triggers Stop-Loss or Take-Profit."""
+    def update_positions_mark_price(
+        self,
+        symbol: str,
+        current_price: float,
+        trailing_atr_mult: float = 1.5,
+        breakeven_atr_mult: float = 1.0
+    ) -> List[Dict[str, Any]]:
+        """Updates live mark prices, trails stop loss dynamically into profit, and executes SL/TP triggers."""
         closed_events = []
         to_close = []
 
@@ -177,15 +188,34 @@ class PaperBroker(BaseBroker):
                 continue
 
             pos.current_price = current_price
+            atr = pos.atr if pos.atr > 0 else (pos.entry_price * 0.015)
 
             if pos.side == "LONG":
                 pos.unrealized_pnl = (current_price - pos.entry_price) * pos.quantity
                 pos.unrealized_pnl_pct = ((current_price - pos.entry_price) / pos.entry_price) * 100.0
 
-                # Check Stop-Loss
+                # 1. Update peak price
+                if current_price > pos.highest_price:
+                    pos.highest_price = current_price
+
+                # 2. Breakeven Lock: Once price gains >= 1.0 ATR, move stop to entry price (Risk-Free!)
+                gain_distance = pos.highest_price - pos.entry_price
+                if gain_distance >= (breakeven_atr_mult * atr):
+                    breakeven_stop = pos.entry_price + (0.1 * atr)  # Cover fees
+                    if pos.stop_loss < breakeven_stop:
+                        pos.stop_loss = breakeven_stop
+                        pos.trailing_stop_active = True
+
+                # 3. Dynamic Trailing Stop: Trail behind the peak price
+                if pos.trailing_stop_active:
+                    dynamic_trail = pos.highest_price - (trailing_atr_mult * atr)
+                    if dynamic_trail > pos.stop_loss:
+                        pos.stop_loss = dynamic_trail
+
+                # Check Exits
                 if current_price <= pos.stop_loss:
-                    to_close.append((pos_id, current_price, "STOP_LOSS_TRIGGERED"))
-                # Check Take-Profit
+                    reason = "TRAILING_STOP_TRIGGERED" if pos.trailing_stop_active else "STOP_LOSS_TRIGGERED"
+                    to_close.append((pos_id, current_price, reason))
                 elif current_price >= pos.take_profit:
                     to_close.append((pos_id, current_price, "TAKE_PROFIT_TRIGGERED"))
 
@@ -193,10 +223,28 @@ class PaperBroker(BaseBroker):
                 pos.unrealized_pnl = (pos.entry_price - current_price) * pos.quantity
                 pos.unrealized_pnl_pct = ((pos.entry_price - current_price) / pos.entry_price) * 100.0
 
-                # Check Stop-Loss
+                # 1. Update lowest price seen
+                if current_price < pos.lowest_price or pos.lowest_price == 0.0:
+                    pos.lowest_price = current_price
+
+                # 2. Breakeven Lock
+                drop_distance = pos.entry_price - pos.lowest_price
+                if drop_distance >= (breakeven_atr_mult * atr):
+                    breakeven_stop = pos.entry_price - (0.1 * atr)
+                    if pos.stop_loss > breakeven_stop:
+                        pos.stop_loss = breakeven_stop
+                        pos.trailing_stop_active = True
+
+                # 3. Dynamic Trailing Stop
+                if pos.trailing_stop_active:
+                    dynamic_trail = pos.lowest_price + (trailing_atr_mult * atr)
+                    if dynamic_trail < pos.stop_loss:
+                        pos.stop_loss = dynamic_trail
+
+                # Check Exits
                 if current_price >= pos.stop_loss:
-                    to_close.append((pos_id, current_price, "STOP_LOSS_TRIGGERED"))
-                # Check Take-Profit
+                    reason = "TRAILING_STOP_TRIGGERED" if pos.trailing_stop_active else "STOP_LOSS_TRIGGERED"
+                    to_close.append((pos_id, current_price, reason))
                 elif current_price <= pos.take_profit:
                     to_close.append((pos_id, current_price, "TAKE_PROFIT_TRIGGERED"))
 

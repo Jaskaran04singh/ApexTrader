@@ -6,7 +6,7 @@ from typing import Dict, Any, List, Optional
 
 @dataclass
 class Position:
-    """Represents an active open position."""
+    """Represents an active open position with trailing stop tracking."""
     position_id: str
     symbol: str
     side: str  # "LONG" or "SHORT"
@@ -18,6 +18,10 @@ class Position:
     unrealized_pnl: float
     unrealized_pnl_pct: float
     opened_at: datetime
+    highest_price: float = 0.0
+    lowest_price: float = 0.0
+    atr: float = 0.0
+    trailing_stop_active: bool = False
 
 
 @dataclass

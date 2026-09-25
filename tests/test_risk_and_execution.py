@@ -94,7 +94,8 @@ def test_paper_broker_execution_and_tp_trigger():
         quantity=0.1,
         price=65000.0,
         stop_loss=64000.0,
-        take_profit=67000.0
+        take_profit=67000.0,
+        atr=500.0
     )
     assert order_res.status == "FILLED"
     assert len(broker.get_open_positions()) == 1
@@ -105,3 +106,53 @@ def test_paper_broker_execution_and_tp_trigger():
     assert triggers[0]["reason"] == "TAKE_PROFIT_TRIGGERED"
     assert len(broker.get_open_positions()) == 0
     assert broker.cash > 10000.0  # Realized profit
+
+
+def test_trailing_stop_loss_locks_profit():
+    broker = PaperBroker(initial_cash=10000.0, slippage_pct=0.0, fee_pct=0.0)
+    
+    # 1. Open BUY order at $65,000 with initial stop loss at $64,000 (ATR = $500)
+    broker.submit_order(
+        symbol="BTC/USDT",
+        side="BUY",
+        quantity=0.1,
+        price=65000.0,
+        stop_loss=64000.0,
+        take_profit=70000.0,
+        atr=500.0
+    )
+    
+    # 2. Price rises to $66,200 (+1,200 > 1.0 ATR). Breakeven and trailing stop should engage!
+    broker.update_positions_mark_price("BTC/USDT", current_price=66200.0, trailing_atr_mult=1.5, breakeven_atr_mult=1.0)
+    pos = list(broker.positions.values())[0]
+    assert pos.trailing_stop_active is True
+    # Trailed stop: 66,200 - (1.5 * 500) = $65,450 (ABOVE entry price of $65,000!)
+    assert pos.stop_loss >= 65000.0
+
+    # 3. Market experiences sudden pullback to $65,300 (hits trailed stop at $65,450)
+    triggers = broker.update_positions_mark_price("BTC/USDT", current_price=65300.0)
+    assert len(triggers) == 1
+    assert triggers[0]["reason"] == "TRAILING_STOP_TRIGGERED"
+    assert len(broker.get_open_positions()) == 0
+    assert broker.cash > 10000.0  # Successfully locked in profit on the pullback!
+
+
+def test_3way_confluence_gate(sample_flow):
+    rm = RiskManager(confidence_threshold=0.75)
+    proposal = TradeProposal("BTC/USDT", "BUY", 65000.0, 64000.0, 67000.0, 2.0, 0.85, "Trade thesis")
+
+    # Case 1: Order book flow heavily opposes (STRONG_SELL_PRESSURE) -> REJECT
+    bearish_flow = OrderFlowSnapshot("BTC/USDT", 65000.0, 65010.0, 10.0, 1.5, 65005.0, -0.6, 20.0, 120.0, "STRONG_SELL_PRESSURE")
+    decision1 = rm.evaluate_trade(proposal, bearish_flow, 0, 10000.0, news_sentiment=0.5, debate_winner="BULL")
+    assert decision1.approved is False
+    assert "Confluence Gate Failed" in decision1.rejection_reason
+
+    # Case 2: Bear won the debate -> REJECT
+    decision2 = rm.evaluate_trade(proposal, sample_flow, 0, 10000.0, news_sentiment=0.5, debate_winner="BEAR")
+    assert decision2.approved is False
+    assert "Bearish researcher won" in decision2.rejection_reason
+
+    # Case 3: All 3 pillars agree (Positive flow, positive news, Bull winner, high confidence) -> APPROVE
+    decision3 = rm.evaluate_trade(proposal, sample_flow, 0, 10000.0, news_sentiment=0.5, debate_winner="BULL")
+    assert decision3.approved is True
+

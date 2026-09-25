@@ -46,9 +46,12 @@ class RiskManager:
         proposal: TradeProposal,
         flow: OrderFlowSnapshot,
         open_positions_count: int,
-        current_equity: float
+        current_equity: float,
+        technical_bias: Optional[str] = None,
+        news_sentiment: Optional[float] = None,
+        debate_winner: Optional[str] = None
     ) -> RiskDecision:
-        """Evaluates trade proposal against all hard risk limits."""
+        """Evaluates trade proposal against all hard risk limits and 3-way multi-factor confluence."""
         self.current_equity = current_equity
         if self.starting_daily_equity is None:
             self.starting_daily_equity = current_equity
@@ -87,7 +90,69 @@ class RiskManager:
                 risk_dollars=0.0
             )
 
-        # 3. Check Max Open Positions
+        # 3. Check 3-Way Multi-Factor Confluence Gate
+        if proposal.action == "BUY":
+            # Flow must not be strong sell pressure
+            if flow.flow_regime == "STRONG_SELL_PRESSURE":
+                return RiskDecision(
+                    approved=False,
+                    rejection_reason="Confluence Gate Failed: Order book shows heavy sell wall dominance.",
+                    proposal=proposal,
+                    quantity=0.0,
+                    notional_value=0.0,
+                    risk_dollars=0.0
+                )
+            # News must not be heavily bearish
+            if news_sentiment is not None and news_sentiment < -0.35:
+                return RiskDecision(
+                    approved=False,
+                    rejection_reason=f"Confluence Gate Failed: News sentiment is strongly negative ({news_sentiment}).",
+                    proposal=proposal,
+                    quantity=0.0,
+                    notional_value=0.0,
+                    risk_dollars=0.0
+                )
+            # Debate should not be won by Bear
+            if debate_winner == "BEAR":
+                return RiskDecision(
+                    approved=False,
+                    rejection_reason="Confluence Gate Failed: Bearish researcher won the dialectic debate.",
+                    proposal=proposal,
+                    quantity=0.0,
+                    notional_value=0.0,
+                    risk_dollars=0.0
+                )
+
+        elif proposal.action == "SELL":
+            if flow.flow_regime == "STRONG_BUY_PRESSURE":
+                return RiskDecision(
+                    approved=False,
+                    rejection_reason="Confluence Gate Failed: Order book shows heavy buy wall dominance.",
+                    proposal=proposal,
+                    quantity=0.0,
+                    notional_value=0.0,
+                    risk_dollars=0.0
+                )
+            if news_sentiment is not None and news_sentiment > 0.35:
+                return RiskDecision(
+                    approved=False,
+                    rejection_reason=f"Confluence Gate Failed: News sentiment is strongly positive ({news_sentiment}).",
+                    proposal=proposal,
+                    quantity=0.0,
+                    notional_value=0.0,
+                    risk_dollars=0.0
+                )
+            if debate_winner == "BULL":
+                return RiskDecision(
+                    approved=False,
+                    rejection_reason="Confluence Gate Failed: Bullish researcher won the dialectic debate.",
+                    proposal=proposal,
+                    quantity=0.0,
+                    notional_value=0.0,
+                    risk_dollars=0.0
+                )
+
+        # 4. Check Max Open Positions
         if open_positions_count >= self.max_open_positions:
             return RiskDecision(
                 approved=False,
@@ -98,7 +163,7 @@ class RiskManager:
                 risk_dollars=0.0
             )
 
-        # 4. Anti-Hallucination Grounding Audit
+        # 5. Anti-Hallucination Grounding Audit
         verdict = self.grounding_gate.audit(proposal, flow)
         if not verdict.is_grounded:
             return RiskDecision(
@@ -110,7 +175,7 @@ class RiskManager:
                 risk_dollars=0.0
             )
 
-        # 5. Position Sizing
+        # 6. Position Sizing
         adjusted = verdict.adjusted_proposal
         sizing = self.position_sizer.calculate_position_size(
             account_equity=current_equity,

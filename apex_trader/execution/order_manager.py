@@ -9,8 +9,8 @@ class OrderManager:
     def __init__(self, broker: BaseBroker):
         self.broker = broker
 
-    def execute_risk_approved_trade(self, decision: RiskDecision) -> OrderResult:
-        """Dispatches an approved trade proposal to the active broker."""
+    def execute_risk_approved_trade(self, decision: RiskDecision, atr: float = 0.0) -> OrderResult:
+        """Dispatches an approved trade proposal to the active broker with ATR for trailing stop tracking."""
         if not decision.approved:
             return OrderResult(
                 order_id="",
@@ -30,12 +30,24 @@ class OrderManager:
             quantity=decision.quantity,
             price=p.target_entry_price,
             stop_loss=p.stop_loss_price,
-            take_profit=p.take_profit_price
+            take_profit=p.take_profit_price,
+            atr=atr
         )
 
-    def sync_market_prices(self, symbol: str, current_price: float) -> List[Dict[str, Any]]:
-        """Syncs latest market price with active positions and checks for SL/TP executions."""
-        return self.broker.update_positions_mark_price(symbol, current_price)
+    def sync_market_prices(
+        self,
+        symbol: str,
+        current_price: float,
+        trailing_atr_mult: float = 1.5,
+        breakeven_atr_mult: float = 1.0
+    ) -> List[Dict[str, Any]]:
+        """Syncs latest market price with active positions and checks for dynamic Trailing Stop / TP executions."""
+        return self.broker.update_positions_mark_price(
+            symbol,
+            current_price,
+            trailing_atr_mult=trailing_atr_mult,
+            breakeven_atr_mult=breakeven_atr_mult
+        )
 
     def get_portfolio_summary(self) -> Dict[str, Any]:
         """Returns snapshot of current portfolio equity, cash, and open positions."""

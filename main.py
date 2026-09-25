@@ -81,8 +81,13 @@ class ApexTraderEngine:
             flow = self.order_flow.fetch_order_flow(symbol=symbol)
             indicators = calculate_indicators(ohlcv.df)
 
-            # Sync open positions against latest market price
-            closed_triggers = self.order_manager.sync_market_prices(symbol, flow.best_bid)
+            # Sync open positions against latest market price with Dynamic Trailing Stop
+            closed_triggers = self.order_manager.sync_market_prices(
+                symbol,
+                flow.best_bid,
+                trailing_atr_mult=self.config.risk.atr_multiplier_stop,
+                breakeven_atr_mult=1.0
+            )
             for trigger in closed_triggers:
                 last_status_msg = f"Auto-closed: {trigger['reason']} for {symbol}"
 
@@ -139,19 +144,25 @@ class ApexTraderEngine:
                 debate=debate
             )
 
-            # Risk Shield Audit
+            # Risk Shield Audit with 3-Way Confluence Gate
             current_equity = self.broker.get_account_equity()
             open_count = len(self.broker.get_open_positions())
             risk_decision = self.risk_manager.evaluate_trade(
                 proposal=proposal,
                 flow=flow,
                 open_positions_count=open_count,
-                current_equity=current_equity
+                current_equity=current_equity,
+                technical_bias=tech_out.details.get("technical_bias"),
+                news_sentiment=news_out.details.get("sentiment_score"),
+                debate_winner=debate.winning_side
             )
 
             # Execution (if approved)
             if risk_decision.approved:
-                order_result = self.order_manager.execute_risk_approved_trade(risk_decision)
+                order_result = self.order_manager.execute_risk_approved_trade(
+                    risk_decision,
+                    atr=indicators.atr_14
+                )
                 last_status_msg = f"EXECUTED: {order_result.message}"
                 self.db.log_trade({
                     "order_id": order_result.order_id,
