@@ -32,16 +32,42 @@ class BaseAgent:
 
     def call_llm(self, prompt: str) -> str:
         """Invokes LLM with fallback mechanism."""
-        # 1. Try litellm if API keys are available
+        # 1. Direct Gemini API call if GEMINI_API_KEY is available
+        if self.provider == "gemini":
+            gemini_key = os.getenv("GEMINI_API_KEY")
+            if gemini_key:
+                try:
+                    import requests
+                    model_clean = self.model_name.replace("gemini/", "").replace("models/", "")
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_clean}:generateContent?key={gemini_key}"
+                    payload = {
+                        "contents": [
+                            {"role": "user", "parts": [{"text": f"System Context:\n{self.system_prompt}\n\nUser Task:\n{prompt}"}]}
+                        ],
+                        "generationConfig": {
+                            "temperature": self.temperature,
+                            "maxOutputTokens": 1000
+                        }
+                    }
+                    resp = requests.post(url, json=payload, timeout=15)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        candidates = data.get("candidates", [])
+                        if candidates:
+                            parts = candidates[0].get("content", {}).get("parts", [])
+                            if parts:
+                                return parts[0].get("text", "")
+                except Exception:
+                    pass
+
+        # 2. Try litellm for multi-provider support (OpenAI, Anthropic, Ollama)
         try:
             import litellm
             litellm.suppress_debug_info = True
             
             # Format model string for litellm
             model = self.model_name
-            if self.provider == "gemini" and not model.startswith("gemini/"):
-                model = f"gemini/{model}"
-            elif self.provider == "openai" and not model.startswith("openai/"):
+            if self.provider == "openai" and not model.startswith("openai/"):
                 model = f"openai/{model}"
             elif self.provider == "anthropic" and not model.startswith("anthropic/"):
                 model = f"anthropic/{model}"
@@ -57,8 +83,8 @@ class BaseAgent:
                 max_tokens=1000
             )
             return response.choices[0].message.content
-        except Exception as e:
-            # Fallback to local heuristic / mock reasoning if no API key is set
+        except Exception:
+            # Fallback to local heuristic reasoning if API call fails
             return self._heuristic_fallback(prompt)
 
     def extract_json(self, raw_text: str) -> Dict[str, Any]:

@@ -28,7 +28,7 @@ risk:
 
 agents:
   llm_provider: "gemini"         # "gemini", "openai", "anthropic", "ollama"
-  model_name: "gemini-2.5-flash"
+  model_name: "gemini-flash-latest"
   temperature: 0.2
   debate_rounds: 1               # Number of rounds for Bull vs. Bear debate
   confidence_threshold: 0.65     # Minimum confidence required from Master Strategist to trigger a trade

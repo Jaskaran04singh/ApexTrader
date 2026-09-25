@@ -39,7 +39,7 @@ class RiskConfig(BaseModel):
 
 class AgentsConfig(BaseModel):
     llm_provider: str = "gemini"
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = "gemini-flash-latest"
     temperature: float = 0.2
     debate_rounds: int = 1
     confidence_threshold: float = 0.65
