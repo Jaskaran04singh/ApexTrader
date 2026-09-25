@@ -157,3 +157,47 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM trades ORDER BY id DESC LIMIT ?", (limit,))
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_performance_summary(self, initial_balance: float = 10000.0) -> Dict[str, Any]:
+        """Calculates overall profit/loss, win rate, fees, and equity statistics."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # 1. Total trades count and fees
+            cursor.execute("SELECT COUNT(*), COALESCE(SUM(fee), 0.0) FROM trades WHERE status='FILLED'")
+            total_trades, total_fees = cursor.fetchone()
+
+            # 2. Realized PnL from closed trades
+            cursor.execute("SELECT COUNT(*), COALESCE(SUM(realized_pnl), 0.0) FROM trades WHERE realized_pnl != 0.0")
+            closed_count, total_realized_pnl = cursor.fetchone()
+
+            # 3. Winning trades count
+            cursor.execute("SELECT COUNT(*) FROM trades WHERE realized_pnl > 0.0")
+            win_count = cursor.fetchone()[0]
+            win_rate = (win_count / closed_count * 100.0) if closed_count > 0 else 0.0
+
+            # 4. Latest Equity
+            cursor.execute("SELECT total_equity, cash, open_positions_count FROM equity_history ORDER BY id DESC LIMIT 1")
+            equity_row = cursor.fetchone()
+
+            latest_equity = equity_row[0] if equity_row else initial_balance
+            latest_cash = equity_row[1] if equity_row else initial_balance
+            open_positions = equity_row[2] if equity_row else 0
+
+            net_pnl = latest_equity - initial_balance
+            net_pnl_pct = (net_pnl / initial_balance) * 100.0
+
+            return {
+                "initial_balance": round(initial_balance, 2),
+                "current_equity": round(latest_equity, 2),
+                "cash": round(latest_cash, 2),
+                "open_positions": open_positions,
+                "net_pnl": round(net_pnl, 2),
+                "net_pnl_pct": round(net_pnl_pct, 2),
+                "total_trades": total_trades,
+                "closed_trades": closed_count,
+                "win_count": win_count,
+                "win_rate_pct": round(win_rate, 2),
+                "total_fees_paid": round(total_fees, 2),
+                "is_profitable": net_pnl >= 0.0,
+            }

@@ -223,15 +223,51 @@ class ApexTraderEngine:
             print("\n[ApexTrader] Shutdown requested by user.")
 
 
+    def print_performance_stats(self):
+        """Displays formatted total profit/loss and performance statistics."""
+        stats = self.db.get_performance_summary(initial_balance=10000.0)
+        from rich.console import Console
+        from rich.table import Table
+        from rich.panel import Panel
+        from rich.text import Text
+        import rich.box as box
+
+        console = Console()
+        table = Table(title="[PORTFOLIO PERFORMANCE & PnL SUMMARY]", box=box.ROUNDED, expand=True)
+        table.add_column("Metric", style="cyan", justify="left")
+        table.add_column("Value", style="bold white", justify="right")
+
+        pnl = stats["net_pnl"]
+        pnl_pct = stats["net_pnl_pct"]
+        pnl_style = "bold green" if pnl >= 0 else "bold red"
+        pnl_text = f"${pnl:+,.2f} ({pnl_pct:+.2f}%)"
+
+        table.add_row("Starting Balance", f"${stats['initial_balance']:,.2f}")
+        table.add_row("Current Account Equity", f"${stats['current_equity']:,.2f}")
+        table.add_row("Available Cash", f"${stats['cash']:,.2f}")
+        table.add_row("Open Positions", str(stats["open_positions"]))
+        table.add_row("Total Executed Trades", str(stats["total_trades"]))
+        table.add_row("Closed Positions", str(stats["closed_trades"]))
+        table.add_row("Win Rate", f"{stats['win_rate_pct']:.1f}% ({stats['win_count']} wins)")
+        table.add_row("Total Fees Paid", f"${stats['total_fees_paid']:,.2f}")
+        table.add_row("Net Overall PnL", Text(pnl_text, style=pnl_style))
+        table.add_row("Profit Status", Text("PROFITABLE [GAIN]" if stats["is_profitable"] else "DRAWDOWN [LOSS]", style=pnl_style))
+
+        console.print(table)
+
+
 def main():
     parser = argparse.ArgumentParser(description="ApexTrader Autonomous Trading System")
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml")
     parser.add_argument("--once", action="store_true", help="Run a single evaluation cycle and exit")
     parser.add_argument("--iterations", type=int, default=0, help="Number of cycles to run (0 = infinite)")
+    parser.add_argument("--stats", action="store_true", help="Display overall Profit/Loss and performance statistics from database")
     args = parser.parse_args()
 
     engine = ApexTraderEngine(config_path=args.config)
-    if args.once:
+    if args.stats:
+        engine.print_performance_stats()
+    elif args.once:
         engine.run_single_cycle()
     else:
         engine.start_loop(iterations=args.iterations)
